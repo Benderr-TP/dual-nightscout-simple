@@ -18,7 +18,7 @@ Parameters:
     Description: Instance type
   SSHLocation:
     Type: String
-    Default: 0.0.0.0/0
+    Default: YOUR_IP/32
     Description: CIDR allowed to SSH (22)
   AppIngressCidr:
     Type: String
@@ -30,7 +30,6 @@ Parameters:
     Description: App port (tools/serve.py default is 8000)
   GitRepoURL:
     Type: String
-    Default: https://github.com/Benderr-TP/dual-nightscout-simple.git
     Description: Git repository to pull
   GitRef:
     Type: String
@@ -48,7 +47,7 @@ Parameters:
   InstallRequirements:
     Type: String
     AllowedValues: ["true", "false"]
-    Default: "false"
+    Default: "true"
     Description: If true, pip install from requirements.txt after clone
   RequirementsPath:
     Type: String
@@ -80,28 +79,6 @@ Parameters:
     Type: String
     Default: ""
     Description: Optional CloudFront distribution ID associated to this app (for reference/tagging)
-  SumoEnabled:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "false"
-    Description: Enable Sumo Logic collector installation
-  SumoInstallScriptUrl:
-    Type: String
-    Default: ""
-    Description: URL to Sumo Logic collector install script
-  SumoCollectorToken:
-    Type: String
-    Default: ""
-    NoEcho: true
-    Description: Sumo collector install token (recommended)
-  SumoDeployment:
-    Type: String
-    Default: "us2"
-    Description: Sumo Logic deployment (e.g., us1, us2, eu, au, in, de, ca)
-  SumoCollectorName:
-    Type: String
-    Default: testapp-devops-collector
-    Description: Name to register the Sumo collector as
 
 Resources:
   SSMRole:
@@ -256,15 +233,6 @@ Resources:
               mount -a || true
             fi
 
-            # Optional Sumo Logic collector install
-            if [ "${SumoEnabled}" = "true" ] && [ -n "${SumoInstallScriptUrl}" ]; then
-              curl -fsSL "${SumoInstallScriptUrl}" -o /tmp/sumo_install.sh || true
-              chmod +x /tmp/sumo_install.sh || true
-              if [ -s /tmp/sumo_install.sh ] && [ -n "${SumoCollectorToken}" ]; then
-                bash /tmp/sumo_install.sh -q -t "${SumoCollectorToken}" -n "${SumoCollectorName}" -r "${SumoDeployment}" || true
-              fi
-            fi
-
             cat >/etc/systemd/system/testapp.service <<SERVICE
             [Unit]
             Description=Dual Nightscout Simple App
@@ -290,29 +258,6 @@ Resources:
 
             systemctl daemon-reload
             systemctl enable --now testapp.service
-
-            # Configure Sumo Logic to collect web logs if enabled
-            if [ "${SumoEnabled}" = "true" ]; then
-              cat > /opt/sumo-sources.json <<'JSON'
-              {
-                "api.version": "v1",
-                "sources": [
-                  {
-                    "sourceType": "LocalFile",
-                    "name": "testapp-web-logs",
-                    "pathExpression": "/var/log/testapp/*.log",
-                    "category": "testapp/web",
-                    "multilineProcessingEnabled": false
-                  }
-                ]
-              }
-JSON
-              # If collector is present, place sources.json where it can be picked up and restart
-              if [ -d /opt/SumoCollector ]; then
-                cp -f /opt/sumo-sources.json /opt/SumoCollector/sources.json || true
-                systemctl restart collector || systemctl restart sumo-collector || true
-              fi
-            fi
 
   AppInstance:
     Type: AWS::EC2::Instance

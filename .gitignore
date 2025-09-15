@@ -1,0 +1,5 @@
+# Environment variables
+.env
+
+# CloudFormation parameter files
+*-params.json
