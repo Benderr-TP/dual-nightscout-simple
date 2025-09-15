@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dual Nightscout View</title>
+    <style>
+        body { margin: 0; padding: 0; }
+        .container { 
+            display: flex; 
+            width: 100vw; 
+            height: 100vh; 
+        }
+        .nightscout-frame { 
+            width: 50%; 
+            height: 100%; 
+            border: none; 
+        }
+        .divider {
+            width: 2px;
+            background-color: #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <iframe src="https://bexnation-ns.bluestechs.org" class="nightscout-frame"></iframe>
+        <div class="divider"></div>
+        <iframe src="https://bennydogg.bluestechs.org" class="nightscout-frame"></div>
+    </div>
+</body>
+</html>
