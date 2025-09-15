@@ -1,0 +1,342 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 Launch Template + Instance to run the app and set hostname.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to launch into
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet (public recommended for direct internet access)
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 KeyPair for SSH access
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.nano, t3.micro, t3.small, t3.medium, t3.large]
+    Description: Instance type
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to SSH (22)
+  AppIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to access the app port
+  AppPort:
+    Type: Number
+    Default: 8000
+    Description: App port (tools/serve.py default is 8000)
+  GitRepoURL:
+    Type: String
+    Default: https://github.com/Benderr-TP/dual-nightscout-simple.git
+    Description: Git repository to pull
+  GitRef:
+    Type: String
+    Default: main
+    Description: Git branch or tag to checkout (falls back to default branch if missing)
+  HostnameFQDN:
+    Type: String
+    Default: testapp-devops.tidepool.org
+    Description: Hostname to set on the instance
+  InstallOSUpdates:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: Whether to apply system updates on first boot
+  InstallRequirements:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: If true, pip install from requirements.txt after clone
+  RequirementsPath:
+    Type: String
+    Default: requirements.txt
+    Description: Path (relative to repo root) for requirements file
+  AdditionalPipPackages:
+    Type: String
+    Default: ""
+    Description: Space-separated pip packages to install (e.g., "pandas==2.2.2 numpy")
+  UseVenv:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: If true, create and use a virtualenv at /opt/app/venv
+  DataVolumeSizeGiB:
+    Type: Number
+    Default: 101
+    Description: Size of secondary EBS data volume in GiB
+  DataVolumeMountPoint:
+    Type: String
+    Default: /mnt/data
+    Description: Mount point for data volume
+  DataVolumeFsType:
+    Type: String
+    Default: xfs
+    AllowedValues: [xfs, ext4]
+    Description: Filesystem type for data volume
+  CloudFrontDistributionId:
+    Type: String
+    Default: ""
+    Description: Optional CloudFront distribution ID associated to this app (for reference/tagging)
+  SumoEnabled:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Enable Sumo Logic collector installation
+  SumoInstallScriptUrl:
+    Type: String
+    Default: ""
+    Description: URL to Sumo Logic collector install script
+  SumoCollectorToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Sumo collector install token (recommended)
+  SumoDeployment:
+    Type: String
+    Default: "us2"
+    Description: Sumo Logic deployment (e.g., us1, us2, eu, au, in, de, ca)
+  SumoCollectorName:
+    Type: String
+    Default: testapp-devops-collector
+    Description: Name to register the Sumo collector as
+
+Resources:
+  SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ssm-role'
+
+  SSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref SSMRole]
+      InstanceProfileName: !Sub '${AWS::StackName}-ssm-profile'
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for app and SSH
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+        - IpProtocol: tcp
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
+          CidrIp: !Ref AppIngressCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-lt'
+      LaunchTemplateData:
+        ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        IamInstanceProfile:
+          Arn: !GetAtt SSMInstanceProfile.Arn
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              DeleteOnTermination: true
+          - DeviceName: /dev/xvdb
+            Ebs:
+              VolumeSize: !Ref DataVolumeSizeGiB
+              VolumeType: gp3
+              DeleteOnTermination: true
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeviceIndex: 0
+            SubnetId: !Ref SubnetId
+            Groups: [!Ref AppSecurityGroup]
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub '${AWS::StackName}-ec2'
+              - Key: CloudFrontDistributionId
+                Value: !Ref CloudFrontDistributionId
+        UserData: !Base64
+          'Fn::Sub': |
+            #!/bin/bash
+            set -euxo pipefail
+            if [ "${InstallOSUpdates}" = "true" ]; then
+              dnf -y update
+            fi
+            dnf -y install git python3 python3-pip
+
+            HOSTNAME_FQDN='${HostnameFQDN}'
+            hostnamectl set-hostname "$HOSTNAME_FQDN"
+            # Use IMDSv2 for instance metadata
+            TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)
+            if [ -n "$TOKEN" ]; then
+              IPV4=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            else
+              IPV4=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 || echo "127.0.0.1")
+            fi
+            if ! grep -q "$HOSTNAME_FQDN" /etc/hosts; then
+              echo "$IPV4 $HOSTNAME_FQDN" >> /etc/hosts
+            fi
+
+            # Ensure SSM agent is enabled for Session Manager
+            systemctl enable --now amazon-ssm-agent || true
+
+            APP_DIR=/opt/app/dual-nightscout-simple
+            REPO_URL='${GitRepoURL}'
+            GIT_REF='${GitRef}'
+            mkdir -p /opt/app
+            if [ -d "$APP_DIR/.git" ]; then
+              git -C "$APP_DIR" fetch --depth 1 origin "$GIT_REF" || true
+              git -C "$APP_DIR" checkout "$GIT_REF" || git -C "$APP_DIR" checkout -
+              git -C "$APP_DIR" pull --ff-only || true
+            else
+              git clone --depth 1 --branch "$GIT_REF" "$REPO_URL" "$APP_DIR" || git clone --depth 1 "$REPO_URL" "$APP_DIR"
+            fi
+            chown -R ec2-user:ec2-user /opt/app
+
+            PY_EXEC=/usr/bin/python3
+            if [ "${UseVenv}" = "true" ]; then
+              python3 -m venv /opt/app/venv
+              . /opt/app/venv/bin/activate
+              PY_EXEC=/opt/app/venv/bin/python
+              PIP=/opt/app/venv/bin/pip
+            else
+              PIP=/usr/bin/pip3
+            fi
+
+            # Ensure log directory for app exists
+            mkdir -p /var/log/testapp
+            chown ec2-user:ec2-user /var/log/testapp
+
+            cd "$APP_DIR"
+            if [ "${InstallRequirements}" = "true" ] && [ -f "${RequirementsPath}" ]; then
+              "$PIP" install --no-cache-dir -r "${RequirementsPath}" || true
+            fi
+            if [ -n "${AdditionalPipPackages}" ]; then
+              "$PIP" install --no-cache-dir ${AdditionalPipPackages} || true
+            fi
+
+            # Prepare and mount data volume (choose first non-root disk)
+            MOUNT_POINT='${DataVolumeMountPoint}'
+            mkdir -p "$MOUNT_POINT"
+            ROOT_PART=$(findmnt -no SOURCE / || true)
+            ROOT_DISK=$(lsblk -no PKNAME "$ROOT_PART" 2>/dev/null || true)
+            CAND=$(lsblk -ndo NAME,TYPE | awk '$2=="disk"{print $1}' | grep -v "^$ROOT_DISK$" | head -n1 || true)
+            if [ -n "$CAND" ]; then DATA_DEV="/dev/$CAND"; else DATA_DEV=""; fi
+            if [ -z "$DATA_DEV" ] && [ -e /dev/nvme1n1 ]; then DATA_DEV=/dev/nvme1n1; fi
+            if [ -n "$DATA_DEV" ]; then
+              if ! blkid "$DATA_DEV" >/dev/null 2>&1; then
+                mkfs -t ${DataVolumeFsType} "$DATA_DEV"
+              fi
+              UUID=$(blkid -s UUID -o value "$DATA_DEV")
+              if ! grep -q "$UUID" /etc/fstab; then
+                echo "UUID=$UUID  $MOUNT_POINT  ${DataVolumeFsType}  defaults,nofail  0 2" >> /etc/fstab
+              fi
+              mount -a || true
+            fi
+
+            # Optional Sumo Logic collector install
+            if [ "${SumoEnabled}" = "true" ] && [ -n "${SumoInstallScriptUrl}" ]; then
+              curl -fsSL "${SumoInstallScriptUrl}" -o /tmp/sumo_install.sh || true
+              chmod +x /tmp/sumo_install.sh || true
+              if [ -s /tmp/sumo_install.sh ] && [ -n "${SumoCollectorToken}" ]; then
+                bash /tmp/sumo_install.sh -q -t "${SumoCollectorToken}" -n "${SumoCollectorName}" -r "${SumoDeployment}" || true
+              fi
+            fi
+
+            cat >/etc/systemd/system/testapp.service <<SERVICE
+            [Unit]
+            Description=Dual Nightscout Simple App
+            After=network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            WorkingDirectory=/opt/app/dual-nightscout-simple
+            Environment=HOST=0.0.0.0
+            Environment=PORT=${AppPort}
+            Environment=APP_HOSTNAME=${HostnameFQDN}
+            ExecStart=$PY_EXEC tools/serve.py
+            StandardOutput=append:/var/log/testapp/app.log
+            StandardError=append:/var/log/testapp/app.log
+            Restart=on-failure
+            User=ec2-user
+            Group=ec2-user
+
+            [Install]
+            WantedBy=multi-user.target
+            SERVICE
+
+            systemctl daemon-reload
+            systemctl enable --now testapp.service
+
+            # Configure Sumo Logic to collect web logs if enabled
+            if [ "${SumoEnabled}" = "true" ]; then
+              cat > /opt/sumo-sources.json <<'JSON'
+              {
+                "api.version": "v1",
+                "sources": [
+                  {
+                    "sourceType": "LocalFile",
+                    "name": "testapp-web-logs",
+                    "pathExpression": "/var/log/testapp/*.log",
+                    "category": "testapp/web",
+                    "multilineProcessingEnabled": false
+                  }
+                ]
+              }
+JSON
+              # If collector is present, place sources.json where it can be picked up and restart
+              if [ -d /opt/SumoCollector ]; then
+                cp -f /opt/sumo-sources.json /opt/SumoCollector/sources.json || true
+                systemctl restart collector || systemctl restart sumo-collector || true
+              fi
+            fi
+
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppLaunchTemplate
+        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+
+Outputs:
+  InstanceId:
+    Value: !Ref AppInstance
+  PublicIp:
+    Value: !GetAtt AppInstance.PublicIp
+  PublicDnsName:
+    Value: !GetAtt AppInstance.PublicDnsName
+  AppURL:
+    Description: Access URL (ensure security group allows the port)
+    Value: !Sub 'http://${AppInstance.PublicDnsName}:${AppPort}'
+  NoteDNS:
+    Description: Reminder to point testapp-devops.tidepool.org at the instance public IP/DNS
+    Value: !Sub 'Update DNS A/ALIAS for ${HostnameFQDN} to ${AppInstance.PublicIp} or ${AppInstance.PublicDnsName}'
+  DataMount:
+    Description: Data volume mount point
+    Value: !Ref DataVolumeMountPoint
+  CloudFrontDistributionIdOut:
+    Description: Optional CloudFront distribution ID passed to the stack
+    Value: !Ref CloudFrontDistributionId

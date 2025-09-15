@@ -1,0 +1,73 @@
+name: Deploy EC2 + CloudFront
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  STACK_NAME: ${{ vars.EC2_STACK_NAME || 'devops-testapp' }}
+  CF_STACK_NAME: ${{ vars.CF_STACK_NAME || 'dual-nightscout-simple-cf' }}
+  VPC_ID: ${{ vars.VPC_ID }}
+  SUBNET_ID: ${{ vars.SUBNET_ID }}
+  KEY_NAME: ${{ vars.KEY_NAME }}
+  HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+  DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'testapp-devops.tidepool.org' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate required variables
+        run: |
+          test -n "$VPC_ID" || (echo 'VPC_ID missing (set in repo or org variables)' && exit 1)
+          test -n "$SUBNET_ID" || (echo 'SUBNET_ID missing' && exit 1)
+          test -n "$KEY_NAME" || (echo 'KEY_NAME missing' && exit 1)
+          test -n "$HOSTED_ZONE_ID" || (echo 'HOSTED_ZONE_ID missing' && exit 1)
+
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Deploy EC2 stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infra/ec2-stack.yaml \
+            --stack-name "$STACK_NAME" \
+            --parameter-overrides VpcId="$VPC_ID" SubnetId="$SUBNET_ID" KeyName="$KEY_NAME"
+
+      - name: Get EC2 stack outputs
+        id: ec2out
+        run: |
+          OUT=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].Outputs' --output json)
+          echo "out=$OUT" >> $GITHUB_OUTPUT
+
+      - name: Extract origin DNS
+        id: origin
+        run: |
+          ORIGIN=$(echo '${{ steps.ec2out.outputs.out }}' | jq -r '.[] | select(.OutputKey=="PublicDnsName") | .OutputValue')
+          echo "ORIGIN_DOMAIN=$ORIGIN" >> $GITHUB_ENV
+          echo "Origin domain: $ORIGIN"
+
+      - name: Deploy CloudFront TLS stack (us-east-1)
+        run: |
+          aws cloudformation deploy \
+            --region us-east-1 \
+            --template-file infra/cloudfront-stack.yaml \
+            --stack-name "$CF_STACK_NAME" \
+            --parameter-overrides DomainName="$DOMAIN_NAME" HostedZoneId="$HOSTED_ZONE_ID" OriginDomainName="$ORIGIN_DOMAIN" OriginPort=8000
