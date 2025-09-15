@@ -91,5 +91,5 @@ Notes
 - For stricter permissions, create a dedicated CloudFormation execution role and limit `cloudformation:*` to use that role via `--role-arn`.
 - The EC2 stack creates an SSM profile; you can SSM into the instance if needed.
 ```
-make ssm-session STACK_NAME=devops-testapp AWS_REGION=us-east-1
+make ssm-session STACK_NAME=my-data-app-ec2 AWS_REGION=us-east-1
 ```

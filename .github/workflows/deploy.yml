@@ -11,13 +11,22 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-  STACK_NAME: ${{ vars.EC2_STACK_NAME || 'devops-testapp' }}
-  CF_STACK_NAME: ${{ vars.CF_STACK_NAME || 'dual-nightscout-simple-cf' }}
+  APP_NAME: ${{ vars.APP_NAME || 'my-data-app' }}
+  STACK_NAME: ${{ vars.EC2_STACK_NAME || format('{0}-ec2', vars.APP_NAME || 'my-data-app') }}
+  CF_STACK_NAME: ${{ vars.CF_STACK_NAME || format('{0}-cf', vars.APP_NAME || 'my-data-app') }}
   VPC_ID: ${{ vars.VPC_ID }}
   SUBNET_ID: ${{ vars.SUBNET_ID }}
   KEY_NAME: ${{ vars.KEY_NAME }}
   HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
-  DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'testapp-devops.tidepool.org' }}
+  DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+  GIT_REPO_URL: ${{ vars.GIT_REPO_URL || format('{0}/{1}.git', github.server_url, github.repository) }}
+  INSTANCE_TYPE: ${{ vars.INSTANCE_TYPE || 't3.micro' }}
+  SSH_CIDR: ${{ vars.SSH_CIDR || '0.0.0.0/0' }}
+  APP_PORT: ${{ vars.APP_PORT || '8000' }}
+  GIT_REF: ${{ vars.GIT_REF || github.ref_name }}
+  INSTALL_REQUIREMENTS: ${{ vars.INSTALL_REQUIREMENTS || 'true' }}
+  USE_VENV: ${{ vars.USE_VENV || 'false' }}
+  PIP_PACKAGES: ${{ vars.PIP_PACKAGES || '' }}
 
 jobs:
   deploy:
@@ -38,18 +47,31 @@ jobs:
           test -n "$SUBNET_ID" || (echo 'SUBNET_ID missing' && exit 1)
           test -n "$KEY_NAME" || (echo 'KEY_NAME missing' && exit 1)
           test -n "$HOSTED_ZONE_ID" || (echo 'HOSTED_ZONE_ID missing' && exit 1)
+          test -n "$DOMAIN_NAME" || (echo 'DOMAIN_NAME missing' && exit 1)
 
       - name: Install jq
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+          # jq is pre-installed on ubuntu-latest runners, but ensure it's available
+          which jq || sudo apt-get update -y && sudo apt-get install -y jq
 
       - name: Deploy EC2 stack
         run: |
           aws cloudformation deploy \
             --template-file infra/ec2-stack.yaml \
             --stack-name "$STACK_NAME" \
-            --parameter-overrides VpcId="$VPC_ID" SubnetId="$SUBNET_ID" KeyName="$KEY_NAME"
+            --parameter-overrides \
+              VpcId="$VPC_ID" \
+              SubnetId="$SUBNET_ID" \
+              KeyName="$KEY_NAME" \
+              GitRepoURL="$GIT_REPO_URL" \
+              GitRef="$GIT_REF" \
+              HostnameFQDN="$DOMAIN_NAME" \
+              InstanceType="$INSTANCE_TYPE" \
+              SSHLocation="$SSH_CIDR" \
+              AppPort="$APP_PORT" \
+              InstallRequirements="$INSTALL_REQUIREMENTS" \
+              UseVenv="$USE_VENV" \
+              AdditionalPipPackages="$PIP_PACKAGES"
 
       - name: Get EC2 stack outputs
         id: ec2out
@@ -70,4 +92,4 @@ jobs:
             --region us-east-1 \
             --template-file infra/cloudfront-stack.yaml \
             --stack-name "$CF_STACK_NAME" \
-            --parameter-overrides DomainName="$DOMAIN_NAME" HostedZoneId="$HOSTED_ZONE_ID" OriginDomainName="$ORIGIN_DOMAIN" OriginPort=8000
+            --parameter-overrides DomainName="$DOMAIN_NAME" HostedZoneId="$HOSTED_ZONE_ID" OriginDomainName="$ORIGIN_DOMAIN" OriginPort="$APP_PORT"

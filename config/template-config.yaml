@@ -1,0 +1,56 @@
+# Template Configuration for Data Science Web App Stack
+# Copy this file to config/local-config.yaml and customize for your deployment
+
+# Application Configuration
+app:
+  name: "my-data-app"                    # Used for stack names and service names
+  display_name: "My Data Science App"    # Human-readable name
+  port: 8000                            # Port your app runs on
+
+# Domain Configuration
+domain:
+  name: "my-app.example.com"            # Your app's public domain
+  hosted_zone_id: ""                    # Route53 hosted zone ID for your domain
+
+# AWS Infrastructure
+aws:
+  region: "us-east-1"                   # AWS region
+  vpc_id: ""                           # VPC ID to deploy into
+  subnet_id: ""                        # Public subnet ID
+  key_name: ""                         # EC2 key pair name for SSH access
+
+# EC2 Configuration
+ec2:
+  instance_type: "t3.micro"            # EC2 instance type
+  ssh_cidr: "0.0.0.0/0"               # CIDR allowed SSH access (restrict for security)
+  app_cidr: "0.0.0.0/0"               # CIDR allowed app access
+  data_volume_size: 101                # Size of data volume in GB
+  install_os_updates: true             # Whether to install OS updates on boot
+
+# Git Repository
+git:
+  repo_url: "https://github.com/your-org/your-repo.git"  # Your git repository URL
+  ref: "main"                          # Git branch/tag to checkout
+  install_requirements: true          # Install requirements.txt if present
+  requirements_path: "requirements.txt" # Path to requirements file
+  use_venv: false                      # Use Python virtual environment
+
+# CloudFront (optional - set enabled: false to skip)
+cloudfront:
+  enabled: true                        # Whether to deploy CloudFront distribution
+  price_class: "PriceClass_100"       # CloudFront price class
+
+# Application-specific configuration (customize based on your app)
+application:
+  # For dual iframe apps (like original Nightscout viewer)
+  iframe_urls:
+    - "https://app1.example.com"
+    - "https://app2.example.com"
+
+  # For data science apps
+  environment_vars:
+    FLASK_ENV: "production"
+    DEBUG: "false"
+
+  # Additional pip packages to install
+  pip_packages: ""                     # Space-separated packages (e.g., "pandas numpy")

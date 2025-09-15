@@ -4,7 +4,7 @@ Description: CloudFront distribution with TLS (ACM) in front of an HTTP origin.
 Parameters:
   DomainName:
     Type: String
-    Description: Public domain for the distribution (e.g., testapp-devops.tidepool.org)
+    Description: Public domain for the distribution (e.g., my-app.example.com)
   HostedZoneId:
     Type: AWS::Route53::HostedZone::Id
     Description: Route53 hosted zone ID that contains DomainName

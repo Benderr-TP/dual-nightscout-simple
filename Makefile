@@ -4,7 +4,7 @@
 -include .env
 export
 
-APP_NAME ?= dual-nightscout-simple
+APP_NAME ?= my-data-app
 AWS_REGION ?= us-east-1
 PORT ?= 8000
 ENV ?= dev
@@ -40,7 +40,7 @@ ec2-stack-outputs:
 
 # DNS helpers (Route53 A record for the instance public IP)
 HOSTED_ZONE_ID ?=
-RECORD_NAME ?= testapp-devops.tidepool.org
+RECORD_NAME ?= $(DOMAIN_NAME)
 RECORD_TTL ?= 60
 
 _PUBLIC_IP        = $(shell aws cloudformation describe-stacks --stack-name $(STACK_NAME) --region $(AWS_REGION) --query "Stacks[0].Outputs[?OutputKey=='PublicIp'].OutputValue" --output text 2>/dev/null)
@@ -50,53 +50,21 @@ dns-upsert:
 	@test -n "$(RECORD_NAME)" || (echo "RECORD_NAME is required" && exit 1)
 	@test -n "$(_PUBLIC_IP)" || (echo "Could not resolve PublicIp from stack $(STACK_NAME)" && exit 1)
 	@echo "Updating A $(RECORD_NAME) -> $(_PUBLIC_IP)"
-	@cat > /tmp/r53-change.json <<EOF
-{
-  "Comment": "Upsert A record for $(RECORD_NAME)",
-  "Changes": [
-    {
-      "Action": "UPSERT",
-      "ResourceRecordSet": {
-        "Name": "$(RECORD_NAME)",
-        "Type": "A",
-        "TTL": $(RECORD_TTL),
-        "ResourceRecords": [{"Value": "$(_PUBLIC_IP)"}]
-      }
-    }
-  ]
-}
-EOF
+	@echo '{"Comment":"Upsert A record for $(RECORD_NAME)","Changes":[{"Action":"UPSERT","ResourceRecordSet":{"Name":"$(RECORD_NAME)","Type":"A","TTL":$(RECORD_TTL),"ResourceRecords":[{"Value":"$(_PUBLIC_IP)"}]}}]}' > /tmp/r53-change.json
 	aws route53 change-resource-record-sets --hosted-zone-id $(HOSTED_ZONE_ID) --change-batch file:///tmp/r53-change.json
 	@rm -f /tmp/r53-change.json
 
 dns-delete:
 	@test -n "$(HOSTED_ZONE_ID)" || (echo "HOSTED_ZONE_ID is required" && exit 1)
 	@echo "Deleting A $(RECORD_NAME)"
-	@cat > /tmp/r53-delete.json <<EOF
-{
-  "Comment": "Delete A record for $(RECORD_NAME)",
-  "Changes": [
-    {
-      "Action": "DELETE",
-      "ResourceRecordSet": {
-        "Name": "$(RECORD_NAME)",
-        "Type": "A",
-        "TTL": $(RECORD_TTL),
-        "ResourceRecords": [{"Value": "0.0.0.0"}]
-      }
-    }
-  ]
-}
-EOF
-	# We need the current IP to delete properly; fetch and patch the JSON
 	@CURR_IP=$$(aws route53 list-resource-record-sets --hosted-zone-id $(HOSTED_ZONE_ID) --query "ResourceRecordSets[?Name=='$(RECORD_NAME).' && Type=='A'].ResourceRecords[0].Value" --output text 2>/dev/null); \
 	if [ -n "$$CURR_IP" ] && [ "$$CURR_IP" != "None" ]; then \
-	  sed -i.bak "s/0.0.0.0/$$CURR_IP/" /tmp/r53-delete.json; \
+	  echo "{\"Comment\":\"Delete A record for $(RECORD_NAME)\",\"Changes\":[{\"Action\":\"DELETE\",\"ResourceRecordSet\":{\"Name\":\"$(RECORD_NAME)\",\"Type\":\"A\",\"TTL\":$(RECORD_TTL),\"ResourceRecords\":[{\"Value\":\"$$CURR_IP\"}]}}]}" > /tmp/r53-delete.json; \
 	  aws route53 change-resource-record-sets --hosted-zone-id $(HOSTED_ZONE_ID) --change-batch file:///tmp/r53-delete.json; \
+	  rm -f /tmp/r53-delete.json; \
 	else \
 	  echo "Record not found or empty; nothing to delete"; \
 	fi
-	@rm -f /tmp/r53-delete.json /tmp/r53-delete.json.bak
 
 # -------------------------
 # CloudFront TLS stack
@@ -104,7 +72,7 @@ EOF
 
 CF_STACK_NAME ?= $(APP_NAME)-cf
 CF_TEMPLATE ?= infra/cloudfront-stack.yaml
-DOMAIN_NAME ?= testapp-devops.tidepool.org
+DOMAIN_NAME ?= my-app.example.com
 HOSTED_ZONE_ID ?=
 ORIGIN_DOMAIN ?=
 ORIGIN_PORT ?= 8000

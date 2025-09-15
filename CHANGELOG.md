@@ -8,7 +8,7 @@ Highlights
 - EC2 stack: `infra/ec2-stack.yaml` (Launch Template + instance) with:
   - Git pull on boot, hostname config, optional venv + `requirements.txt` install.
   - 101 GiB secondary volume (configurable) auto-format/mount.
-  - Sumo Logic optional collector + web log collection (`/var/log/testapp/app.log`).
+  - Sumo Logic optional collector + web log collection (`/var/log/webapp/app.log`).
   - IMDSv2 usage, SSM Session Manager role/profile.
 - CloudFront TLS stack: `infra/cloudfront-stack.yaml` (ACM cert, distribution, Route53 A-alias).
 - Makefile shortcuts: build/push image, App Runner, EC2/Route53 helpers, CloudFront deploy, SSM session.

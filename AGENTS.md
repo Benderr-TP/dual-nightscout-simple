@@ -29,12 +29,12 @@
 
 ## EC2 Launch Template (Git pull on boot)
 - Template: `infra/ec2-stack.yaml` creates a Launch Template, SG, and one EC2 instance.
-- On boot: sets hostname to `testapp-devops.tidepool.org`, clones this repo, installs optional Python deps, mounts a 101 GiB data volume, and runs `tools/serve.py` as a systemd service on port `8000`.
-- Web logs: written to `/var/log/testapp/app.log`. If Sumo is enabled, logs are collected via `/opt/SumoCollector/sources.json`.
+- On boot: sets hostname to `my-app.example.com`, clones this repo, installs optional Python deps, mounts a 101 GiB data volume, and runs `tools/serve.py` as a systemd service on port `8000`.
+- Web logs: written to `/var/log/webapp/app.log`. If Sumo is enabled, logs are collected via `/opt/SumoCollector/sources.json`.
 - Deploy:
-  - `aws cloudformation deploy --template-file infra/ec2-stack.yaml --stack-name devops-testapp \
+  - `aws cloudformation deploy --template-file infra/ec2-stack.yaml --stack-name my-data-app-ec2 \
      --parameter-overrides VpcId=vpc-xxxx SubnetId=subnet-xxxx KeyName=your-key`
-- Access: open `http://<public-dns>:8000/` or point DNS `testapp-devops.tidepool.org` to the instance public IP.
+- Access: open `http://<public-dns>:8000/` or point DNS `my-app.example.com` to the instance public IP.
  - Debug: Session Manager is enabled. Start a shell with `make ssm-session` or `aws ssm start-session --target <InstanceId>`.
 
 ### Useful Parameters (override as needed)
@@ -48,7 +48,7 @@
 - Tagging: `CloudFrontDistributionId=<id>` stored on the instance as a tag.
 
 Example with extras:
-- `aws cloudformation deploy --template-file infra/ec2-stack.yaml --stack-name devops-testapp \
+- `aws cloudformation deploy --template-file infra/ec2-stack.yaml --stack-name my-data-app-ec2 \
    --parameter-overrides VpcId=vpc-xxxx SubnetId=subnet-xxxx KeyName=your-key \
    GitRef=main InstallRequirements=true AdditionalPipPackages="pandas==2.2.2 numpy" \
    UseVenv=true DataVolumeSizeGiB=101 SumoEnabled=false`
@@ -57,17 +57,17 @@ Example with extras:
 - Deploy stack: `make ec2-stack-deploy VPC_ID=vpc-xxx SUBNET_ID=subnet-xxx KEY_NAME=my-key CFN_EXTRA_PARAMS="GitRef=main InstallRequirements=true"`
 - Show outputs: `make ec2-stack-outputs`
 - Delete stack: `make ec2-stack-delete`
-- Route53 A record: `make dns-upsert HOSTED_ZONE_ID=Z123 RECORD_NAME=testapp-devops.tidepool.org`
-- Remove Route53 record: `make dns-delete HOSTED_ZONE_ID=Z123 RECORD_NAME=testapp-devops.tidepool.org`
+- Route53 A record: `make dns-upsert HOSTED_ZONE_ID=Z123 RECORD_NAME=my-app.example.com`
+- Remove Route53 record: `make dns-delete HOSTED_ZONE_ID=Z123 RECORD_NAME=my-app.example.com`
 - SSM shell: `make ssm-session`
 
 ## TLS via CloudFront
 - Template: `infra/cloudfront-stack.yaml` creates an ACM cert (us-east-1), a CloudFront distribution with your domain, and a Route53 A alias record.
 - Parameters:
-  - `DomainName` (e.g., `testapp-devops.tidepool.org`), `HostedZoneId`, `OriginDomainName` (EC2 public DNS or ALB DNS), `OriginPort` (default 8000).
+  - `DomainName` (e.g., `my-app.example.com`), `HostedZoneId`, `OriginDomainName` (EC2 public DNS or ALB DNS), `OriginPort` (default 8000).
 - Deploy with Makefile:
-  - `make cf-stack-deploy HOSTED_ZONE_ID=Z123 ORIGIN_DOMAIN=<ec2-public-dns> DOMAIN_NAME=testapp-devops.tidepool.org`
-- After deploy: browse `https://testapp-devops.tidepool.org` (CloudFront caches GET/HEAD, redirects to HTTPS).
+  - `make cf-stack-deploy HOSTED_ZONE_ID=Z123 ORIGIN_DOMAIN=<ec2-public-dns> DOMAIN_NAME=my-app.example.com`
+- After deploy: browse `https://my-app.example.com` (CloudFront caches GET/HEAD, redirects to HTTPS).
 - Open `index.html` directly in a browser for quick checks.
 
 ## CI/CD (GitHub Actions)
